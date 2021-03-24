@@ -3,7 +3,7 @@ parsnip
 
 [![Hackage](https://img.shields.io/hackage/v/parsnip.svg)](https://hackage.haskell.org/package/parsnip)
 
-This is a rather minimal parsing library for applications that do not need nice error messages.
+This is a rather minimal parsing library.
 
 Use with a library like `parsers` or `parser-combinators` to fill in the missing functionality.
 
