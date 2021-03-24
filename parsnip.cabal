@@ -47,11 +47,11 @@ common base
   build-depends:
     attoparsec,
     base >= 4.15 && < 5,
-    bytestring >= 0.11,
-    containers,
-    data-default,
+    bytestring ^>= 0.11,
+    containers ^>= 0.6,
+    data-default < 0.8,
     ghc-prim,
-    primitive
+    primitive ^>= 0.7
 
 library
   import: base
