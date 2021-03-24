@@ -29,9 +29,9 @@ module Text.Parsnip.Internal.Parser
 (
 -- * Parser
   Parser(..)
-, Option(Option#,Some,None)
-, mapOption, setOption
-, Result, pattern OK, pattern Fail
+, Res(Res#,Good,Bad,Ugly)
+, mapRes, setRes
+, Result, pattern OK, pattern Fail, pattern Err
 , mapResult, setResult
 , try
 -- * Unsafe literals
@@ -62,119 +62,124 @@ import System.IO.Unsafe
 import Text.Parsnip.Location
 import Text.Parsnip.Internal.Private
 
---------------------------------------------------------------------------------
--- * Option
---------------------------------------------------------------------------------
+newtype Res e a = Res# (# a | (##) | e #)
 
--- | Unlifted 'Maybe'
-newtype Option a = Option# (# a | (##) #)
+pattern Good :: a -> Res e a
+pattern Good a = Res# (# a | | #)
 
-pattern Some :: a -> Option a
-pattern Some a = Option# (# a | #)
+pattern Bad :: Res e a
+pattern Bad = Res# (# | (##) | #)
 
-pattern None :: Option a
-pattern None = Option# (# | (##) #)
+-- user error, don't recover
+pattern Ugly :: e -> Res e a
+pattern Ugly e = Res# (# | | e #)
 
-{-# complete Some, None #-} -- these don't work outside this module =(
+{-# complete Good, Bad, Ugly :: Res #-}
 
-mapOption :: (a -> b) -> Option a -> Option b
-mapOption f (Some a) = Some $! f a
-mapOption _ None = None
-{-# inline mapOption #-}
+mapRes :: (a -> b) -> Res e a -> Res e b
+mapRes f (Good a) = Good $! f a
+mapRes _ Bad = Bad
+mapRes _ (Ugly e) = Ugly e
+{-# inline mapRes #-}
 
-setOption :: b -> Option a -> Option b
-setOption b (Some _) = Some b
-setOption _ None = None
-{-# inline setOption #-}
+setRes :: b -> Res e a -> Res e b
+setRes b (Good _) = Good b
+setRes _ Bad = Bad
+setRes _ (Ugly e) = Ugly e
+{-# inline setRes #-}
 
 --------------------------------------------------------------------------------
 -- * Result
 --------------------------------------------------------------------------------
 
-type Result s a = (# Option a, Addr#, State# s #)
+type Result s e a = (# Res e a, Addr#, State# s #)
 
-pattern OK :: a -> Addr# -> State# s -> Result s a
-pattern OK a p s = (# Some a, p, s #)
+pattern OK :: a -> Addr# -> State# s -> Result s e a
+pattern OK a p s = (# Good a, p, s #)
 
-pattern Fail :: Addr# -> State# s -> Result s a
-pattern Fail p s = (# None, p, s #)
+pattern Fail :: Addr# -> State# s -> Result s e a
+pattern Fail p s = (# Bad, p, s #)
 
-{-# complete OK, Fail #-}
+pattern Err :: e -> Addr# -> State# s -> Result s e a
+pattern Err e p s = (# Ugly e, p, s #)
 
-mapResult :: (a -> b) -> Result s a -> Result s b
-mapResult f (# o, p, s #) = (# mapOption f o, p, s #)
+{-# complete OK, Fail, Err #-}
+
+mapResult :: (a -> b) -> Result s e a -> Result s e b
+mapResult f (# o, p, s #) = (# mapRes f o, p, s #)
 {-# inline mapResult #-}
 
-setResult :: b -> Result s a -> Result s b
-setResult b (# o, p, s #) = (# setOption b o, p, s #)
+setResult :: b -> Result s e a -> Result s e b
+setResult b (# o, p, s #) = (# setRes b o, p, s #)
 {-# inline setResult #-}
 
 --------------------------------------------------------------------------------
 -- * Result
 --------------------------------------------------------------------------------
 
-newtype Parser s a = Parser
- { runParser :: Addr# -> State# s -> Result s a
+newtype Parser s e a = Parser
+ { runParser :: Addr# -> State# s -> Result s e a
  }
 
-instance Functor (Parser s) where
+instance Functor (Parser s e) where
   fmap f (Parser m) = Parser \ p s -> mapResult f (m p s)
   {-# inline fmap #-}
   b <$ Parser m = Parser \ p s -> case m p s of
     OK _ q t -> OK b q t
     Fail q t -> Fail q t
+    Err e q t -> Err e q t
   {-# inline (<$) #-}
 
-instance Applicative (Parser s) where
+instance Applicative (Parser s e) where
   pure a = Parser \ p s -> OK a p s
   {-# inline pure #-}
   Parser m <*> Parser n = Parser \p s -> case m p s of
     Fail q t -> Fail q t
     OK f q t -> mapResult f (n q t)
+    Err e q t -> Err e q t
   {-# inline (<*>) #-}
   Parser m *> Parser n = Parser \p s -> case m p s of
     Fail q t -> Fail q t
     OK _ q t -> n q t
+    Err e q t -> Err e q t
   {-# inline (*>) #-}
   Parser m <* Parser n = Parser \p s -> case m p s of
     OK a q t -> setResult a (n q t)
     x -> x
   {-# inline (<*) #-}
 
-instance Monad (Parser s) where
+instance Monad (Parser s e) where
   Parser m >>= f = Parser \p s -> case m p s of
     Fail q t -> Fail q t
+    Err e q t -> Err e q t
     OK a q t -> runParser (f a) q t
   {-# inline (>>=) #-}
   (>>) = (*>)
   {-# inline (>>) #-}
-#if !MIN_VERSION_base(4,13,0)
-  fail _ = Parser Fail
-  {-# inline fail #-}
-#endif
 
-instance Alternative (Parser s) where
+instance Alternative (Parser s e) where
   Parser m <|> Parser n = Parser \ p s -> case m p s of
     Fail _ t -> n p t
     OK a q t -> OK a q t
+    Err _ _ t -> n p t
   {-# inline (<|>) #-}
   empty = Parser Fail
   {-# inline empty #-}
 
-instance MonadPlus (Parser s) where
+instance MonadPlus (Parser s e) where
   mplus = (<|>)
   {-# inline mplus #-}
   mzero = empty
   {-# inline mzero #-}
 
-instance PrimMonad (Parser s) where
-  type PrimState (Parser s) = s
+instance PrimMonad (Parser s e) where
+  type PrimState (Parser s e) = s
   primitive f = Parser \p s -> case f s of
     (# t, a #) -> OK a p t
   {-# inline primitive #-}
 
 -- perhaps this interface is a little low level. hrmm
-instance a ~ ByteString => IsString (Parser s a) where
+instance a ~ ByteString => IsString (Parser s e a) where
   fromString "" = pure B.empty
   fromString xs = Parser \p s -> case sizeofMutableByteArray# ba of
     n -> case io (c_strncmp (mutableByteArrayContents# ba) p (fromIntegral $ I# n)) s of
@@ -184,12 +189,13 @@ instance a ~ ByteString => IsString (Parser s a) where
     where !(MutableByteArray ba) = pinnedByteArrayFromString0 xs
           bs = B.PS (ForeignPtr (mutableByteArrayContents# ba) (PlainPtr ba)) 0 (I# (sizeofMutableByteArray# ba))
 
-try :: Parser s a -> Parser s a
+try :: Parser s e a -> Parser s e a
 try (Parser m) = Parser $ \p s -> case m p s of
   OK a q t -> OK a q t
   Fail _ t -> Fail p t
+  Err e _ t -> Err e p t
 
-word8 :: Word8 -> Parser s Word8
+word8 :: Word8 -> Parser s e Word8
 word8 0 = empty
 word8 r@(W8# c) = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c' #) -> if isTrue# (c `eqWord#` c')
@@ -202,7 +208,7 @@ word8 r@(W8# c) = Parser \p s -> case readWord8OffAddr# p 0# s of
 ---------------------------------------------------------------------------------------
 
 -- | super-duper unsafe. Fabricates bytestrings that directly reference constant memory
-litN :: Addr# -> CSize -> Parser s ByteString
+litN :: Addr# -> CSize -> Parser s e ByteString
 litN q n = Parser \p s -> case io (c_strncmp p q n) s of
     (# t, 0 #) -> OK bs (p `plusAddr#` csize n) t
     (# t, _ #) -> Fail p t
@@ -215,7 +221,7 @@ litN q n = Parser \p s -> case io (c_strncmp p q n) s of
 -- @
 -- hello = lit "hello"#
 -- @
-lit :: Addr# -> Parser s ByteString
+lit :: Addr# -> Parser s e ByteString
 lit q = litN q (pure_strlen q)
 
 literalForeignPtrContents :: ForeignPtrContents
@@ -227,7 +233,7 @@ unsafeLiteralForeignPtr :: Addr# -> ForeignPtr Word8
 unsafeLiteralForeignPtr addr = ForeignPtr addr literalForeignPtrContents
 
 unsafeLiteralByteStringN :: Addr# -> CSize -> ByteString
-unsafeLiteralByteStringN p n = PS (unsafeLiteralForeignPtr p) 0 (fromIntegral n)
+unsafeLiteralByteStringN p n = BS (unsafeLiteralForeignPtr p) (fromIntegral n)
 {-# noinline unsafeLiteralByteStringN #-}
 
 --unsafeLiteralByteString :: Addr# -> ByteString
@@ -274,21 +280,22 @@ class KnownBase (s :: Type) where
 -- * Parsing
 --------------------------------------------------------------------------------
 
-parse :: (forall s. KnownBase s => Parser s a) -> ByteString -> Either Location a
+parse :: (forall s. KnownBase s => Parser s e a) -> ByteString -> Either (Location, Maybe e) a
 parse m bs@(B.BS (ForeignPtr b g) (I# len)) = unsafeDupablePerformIO $
   B.useAsCString bs \(Ptr p) -> -- now it is null terminated
     IO \s -> let base = Base b g p (plusAddr# p len) in
       case runParser (withBase (\_ -> m) base proxy#) p s of
         (# n, q, t #) -> (# t, finish base q n #)
 
-finish :: Base s -> Addr# -> Option a -> Either Location a
+finish :: Base s -> Addr# -> Res e a -> Either (Location, Maybe e) a
 finish (Base b g q r) p = \case
-  Some a -> Right a
-  None -> Left (location (mkBS b g (minusAddr# r q)) (I# (minusAddr# p q)))
+  Good a -> Right a
+  Bad    -> Left (location (mkBS b g (minusAddr# r q)) (I# (minusAddr# p q)), Nothing)
+  Ugly e -> Left (location (mkBS b g (minusAddr# r q)) (I# (minusAddr# p q)), Just e)
 {-# inline finish #-}
 
-data Wrap s a = Wrap (KnownBase s => Proxy# s -> Parser s a)
+data Wrap s e a = Wrap (KnownBase s => Proxy# s -> Parser s e a)
 
-withBase :: (KnownBase s => Proxy# s -> Parser s a) -> Base s -> Proxy# s -> Parser s a
+withBase :: (KnownBase s => Proxy# s -> Parser s e a) -> Base s -> Proxy# s -> Parser s e a
 withBase f x y = magicDict (Wrap f) x y
 {-# inline withBase #-}

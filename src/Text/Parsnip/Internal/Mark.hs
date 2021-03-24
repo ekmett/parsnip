@@ -101,12 +101,12 @@ minusMark (Mk p) (Mk q) = I# (minusAddr# p q)
 {-# inline minusMark #-}
 
 -- | Record the current position
-mark :: Parser s (Mark s)
+mark :: Parser s e (Mark s)
 mark = Parser \p s -> OK (Mk p) p s
 {-# inline mark #-}
 
 -- | Return to a previous location.
-release :: Mark s -> Parser s ()
+release :: Mark s -> Parser s e ()
 release (Mk q) = Parser \_ s -> OK () q s
 {-# inline release #-}
 
@@ -122,11 +122,11 @@ snip = case reflectBase @s of
     else B.empty
 {-# inline snip #-}
 
-snipping :: forall s a. KnownBase s => Parser s a -> Parser s ByteString
+snipping :: forall s e a. KnownBase s => Parser s e a -> Parser s e ByteString
 snipping = case reflectBase @s of
   !(Base b g r _) -> \(Parser m) -> Parser \p s -> case m p s of
     (# o, q, t #) ->
-      (# setOption
+      (# setRes
         ( if isTrue# (geAddr# q p)
           then mkBS (b `plusAddr#` minusAddr# p r) g (minusAddr# q p)
           else B.empty

@@ -37,14 +37,14 @@ import Text.Parsnip.Parser
 -- * Word8 parsers
 --------------------------------------------------------------------------------
 
-satisfy :: (Word8 -> Bool) -> Parser s Word8
+satisfy :: (Word8 -> Bool) -> Parser s e Word8
 satisfy f = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c #) -> if isTrue# (0## `neWord#` c) && f (W8# c)
     then OK (W8# c) (plusAddr# p 1#) t
     else Fail p t
 {-# inline satisfy #-}
 
-notWord8 :: Word8 -> Parser s Word8
+notWord8 :: Word8 -> Parser s e Word8
 notWord8 0 = anyWord8
 notWord8 (W8# c) = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c' #) -> if isTrue# (0## `neWord#` c') && isTrue# (c `neWord#` c')
@@ -52,19 +52,19 @@ notWord8 (W8# c) = Parser \p s -> case readWord8OffAddr# p 0# s of
     else Fail p t
 {-# inline notWord8 #-}
 
-nextWord8 :: Parser s (Maybe Word8)
+nextWord8 :: Parser s e (Maybe Word8)
 nextWord8 = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c #) -> OK (if isTrue# (0## `neWord#` c) then Just (W8# c) else Nothing) p t
 {-# inline nextWord8 #-}
 
-nextWord8' :: Parser s Word8
+nextWord8' :: Parser s e Word8
 nextWord8' = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c #) -> if isTrue# (0## `neWord#` c)
     then OK (W8# c) p t
     else Fail p t
 {-# inline nextWord8' #-}
 
-anyWord8 :: Parser s Word8
+anyWord8 :: Parser s e Word8
 anyWord8 = Parser \p s -> case readWord8OffAddr# p 0# s of
   (# t, c #) -> if isTrue# (0## `neWord#` c)
     then OK (W8# c) (plusAddr# p 1#) t
@@ -79,7 +79,7 @@ scan f = go where
       else scan f (plusAddr# p 1#) t
 {-# inline scan #-}
 
-skipWhile :: (Word8 -> Bool) -> Parser s ()
+skipWhile :: (Word8 -> Bool) -> Parser s e ()
 skipWhile f = Parser \p s -> case scan f p s of
   (# t, q #) -> OK () q t
 {-# inline [1] skipWhile #-}
@@ -91,7 +91,7 @@ skipWhile f = Parser \p s -> case scan f p s of
   skipWhile (`neWord8` x) = skipTillWord8 x
   #-}
 
-skipTill :: (Word8 -> Bool) -> Parser s ()
+skipTill :: (Word8 -> Bool) -> Parser s e ()
 skipTill p = skipWhile (not . p)
 {-# inline [1] skipTill #-}
 
@@ -102,43 +102,43 @@ skipTill p = skipWhile (not . p)
   skipWhile (`eqWord8` x) = skipTillWord8 x
   #-}
 
-skipTillSome :: (Word8 -> Bool) -> Parser s ()
+skipTillSome :: (Word8 -> Bool) -> Parser s e ()
 skipTillSome p = skipWhileSome (not . p)
 {-# inline skipTillSome #-}
 
 foreign import ccall "parsnip.h" strchr0 :: Addr# -> Char# -> IO (Ptr Word8) -- lazy reimport is lazy
 
-skipTillWord8 :: Word8 -> Parser s ()
+skipTillWord8 :: Word8 -> Parser s e ()
 skipTillWord8 (W8# c) = Parser $ \p s -> case io (strchr0 p (chr# (word2Int# c))) s of -- lazy cast is lazy
   (# t, Ptr q #) -> OK () q t
 {-# inline skipTillWord8 #-}
 
-skipWhileSome :: (Word8 -> Bool) -> Parser s ()
+skipWhileSome :: (Word8 -> Bool) -> Parser s e ()
 skipWhileSome p = satisfy p *> skipWhile p
 {-# inline skipWhileSome #-}
 
-while :: KnownBase s => (Word8 -> Bool) -> Parser s ByteString
+while :: KnownBase s => (Word8 -> Bool) -> Parser s e ByteString
 while f = snipping (skipWhile f)
 {-# inline while #-}
 
-till :: KnownBase s => (Word8 -> Bool) -> Parser s ByteString
+till :: KnownBase s => (Word8 -> Bool) -> Parser s e ByteString
 till p = snipping (skipTill p)
 {-# inline till #-}
 
-tillWord8 :: KnownBase s => Word8 -> Parser s ByteString
+tillWord8 :: KnownBase s => Word8 -> Parser s e ByteString
 tillWord8 c = snipping (skipTillWord8 c)
 {-# inline tillWord8 #-}
 
-whileSome :: KnownBase s => (Word8 -> Bool) -> Parser s ByteString
+whileSome :: KnownBase s => (Word8 -> Bool) -> Parser s e ByteString
 whileSome p = snipping (skipWhileSome p)
 {-# inline whileSome #-}
 
-tillSome :: KnownBase s => (Word8 -> Bool) -> Parser s ByteString
+tillSome :: KnownBase s => (Word8 -> Bool) -> Parser s e ByteString
 tillSome p = snipping (skipTillSome p)
 {-# inline tillSome #-}
 
 -- | Peek at the previous character. Always succeeds.
-previousWord8 :: forall s. KnownBase s => Parser s (Maybe Word8)
+previousWord8 :: forall s e. KnownBase s => Parser s e (Maybe Word8)
 previousWord8 = case reflectBase @s of
   !(Base _ _ l _) -> Parser \p s ->
     if isTrue# (ltAddr# l p)
@@ -148,7 +148,7 @@ previousWord8 = case reflectBase @s of
 {-# inline previousWord8 #-}
 
 -- | Peek at the previous character. Fails if we're at the start of input.
-previousWord8' :: forall s. KnownBase s => Parser s Word8
+previousWord8' :: forall s e. KnownBase s => Parser s e Word8
 previousWord8' = case reflectBase @s of
   !(Base _ _ l _) -> Parser \p s ->
     if isTrue# (ltAddr# l p)
